@@ -31,7 +31,7 @@
 
 #include <openssl/md5.h>
 
-int main(int argc, char **argv)
+int main( int argc, char **argv )
 {
 	uint8_t key64[ 4 ][ 5 ] = {
 		{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 },
