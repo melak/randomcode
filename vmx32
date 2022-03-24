@@ -1,0 +1,105 @@
+#!/bin/sh
+# vim: tabstop=4 shiftwidth=4 expandtab colorcolumn=80 foldmethod=marker :
+
+# Interpreter for ELF binaries. When invoked, sends a mail with the details
+# of the invoker and the invocant to the email addresses specified below.
+# Does not _actually_ do anything with the binaries - it's more like a honeypot,
+# with suitable binfmt_misc configuration (detailed below).
+#
+# binfmt_misc setup:
+# ------------------
+#
+# echo ':elfi386:M::\x7f\x45\x4c\x46\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03:\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff:/usr/local/bin/vmx32:' > /proc/sys/fs/binfmt_misc/register
+# echo ':elfx32:M::\x7f\x45\x4c\x46\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x3e:\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff:/usr/local/bin/vmx32:' > /proc/sys/fs/binfmt_misc/register
+#
+# binfmt_misc teardown:
+# ---------------------
+#
+# echo -1 > /proc/sys/fs/binfmt_misc/elfi386
+# echo -1 > /proc/sys/fs/binfmt_misc/elfx32
+#
+# Details:
+#
+# The (to us interesting bits of the ) headers of a dynamically and a
+# statically linked i386 ELF binary look like as follows:
+#
+# 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12
+# ---------------------------------------------------------------------------------------------
+# 7F 45 4C 46 01 01 01 00 00 00 00 00 00 00 00 00 03 00 03              Dynamically linked i386
+# 7F 45 4C 46 01 01 01 03 00 00 00 00 00 00 00 00 02 00 03              Statically linked i386
+#
+# Of this, the magic is interested in:
+# 0x00 - 0x03   0x7F 'E' 'L' 'F'; magic
+# 0x04          0x01 - 32-bit, 0x02 - 64-bit; bitness (i386 is 32-bit)
+# 0x11 - 0x12   0x03 - X86, 0x3E - AMD x86-64; machine type (in LE byte order) (i386 is X86)
+#
+# Thus the mask covering 32-bit ELF files for x86-64 is
+# FF FF FF FF FF 00 00 00 00 00 00 00 00 00 00 00 00 FF FF
+#
+# Likewise, for X32 binaries:
+#
+# 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12
+# ---------------------------------------------------------------------------------------------
+# 7F 45 4C 46 01 01 01 00 00 00 00 00 00 00 00 00 03 00 3E              Dynamically linked X32
+# 7F 45 4C 46 01 01 01 03 00 00 00 00 00 00 00 00 02 00 3E              Statically linked X32
+#
+# Of this, the magic is interested in:
+# 0x00 - 0x03   0x7F 'E' 'L' 'F'; magic
+# 0x04          0x01 - 32-bit, 0x02 - 64-bit; bitness (X32 is 32-bit)
+# 0x11 - 0x12   0x03 - X86, 0x3E - AMD x86-64; machine type (in LE byte order) (X32 is x86-64)
+#
+# Thus the mask covering 32-bit ELF files for x86-64 again is
+# FF FF FF FF FF 00 00 00 00 00 00 00 00 00 00 00 00 FF FF
+
+LC_ALL='C'
+PATH='/bin:/sbin:/usr/bin:/usr/sbin'
+MAILTO=''
+unset ENV LD_LIBRARY_PATH LD_PRELOAD
+
+prog="$( readlink -f "${1}" )"
+shift
+args="$@"
+
+username="$( whoami )"
+uid="$( id -u )"
+gid="$( id -g )"
+
+logger -t ${0##*/} -p authpriv.alert "foreign binary execution by user=${username}:uid=${uid}:gid=${gid}: ${prog} ${args}"
+if (command -v mail >/dev/null 2>/dev/null) && [ "${MAILTO}" ]
+then
+    cat <<EOF | mail -s 'Foreign binary execution attempt' "${MAILTO}"
+
+Hello,
+
+It transpires that one of your users thought sneaking a foreign binary onto this
+system and trying to run it might be a good idea. Here are the details of the incident:
+
+Username:               ${username}
+UID:                    ${uid}
+Primary GID:            ${gid}
+
+Program invoked:        ${prog}
+With arguments:         ${args}
+
+File details:
+
+$( stat "${prog}" )
+
+File information:
+
+$( file -b "${prog}" )
+
+ELF file headers:
+
+$( readelf -h "${prog}" )
+
+You probably want to be making some inquiries.
+
+Regards,
+
+Your trustworthy $( readlink -f "${0}" )
+
+EOF
+fi
+
+kill -9 $$
